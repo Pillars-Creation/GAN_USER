@@ -27,7 +27,7 @@ def get_args():
     # parser.add_argument('--dataset_path', default='./datahub/movielens1M/emb_warm_split_preprocess_ml-1M.pkl')
     # parser.add_argument('--dataset_path',
     #                     default='./datahub/taobaoAd/cold_start/emb_warm_split_preprocess_taobao-ad.pkl')
-    parser.add_argument('--warmup_model', default='gar',
+    parser.add_argument('--warmup_model', default='cvaegan_c',
                         help="required to be one of [base, mwuf, metaE, cvar, cvaegan, gan]")
     parser.add_argument('--save_pretrain_model', type=bool, default=True, )
     parser.add_argument('--is_dropoutnet', type=bool, default=False, help="whether to use dropout net for pretrain")
@@ -588,7 +588,7 @@ def cvaegan_c(model,
               weight_decay,
               device,
               save_dir, dataset_name):
-    print("*" * 20, "cvaegan_c" + model_name, "*" * 20)
+    print("*" * 20, "cvaegan_c_" + model_name, "*" * 20)
     device = torch.device(device)
     save_dir = os.path.join(save_dir, model_name)
     if not os.path.exists(save_dir):
@@ -602,12 +602,12 @@ def cvaegan_c(model,
         c_feature = 'cate_id'
         c_class_size = 5000
     elif dataset_name == 'movielens25M':
-        c_feature = 'genres'
+        c_feature = 'clk_seq'
         c_class_size = 20
 
     # train cvar
     warm_model = CVAEGAN(model,
-                         warm_features=dataloaders.item_features,
+                         warm_features=dataloaders.user_features,
                          train_loader=train_base,
                          device=device, c_feature=c_feature, c_class_size=c_class_size).to(device)
     warm_model.init_cvaegan()
@@ -616,16 +616,16 @@ def cvaegan_c(model,
         warm_model.train()
         criterion = torch.nn.BCELoss()
         CE_loss = torch.nn.CrossEntropyLoss()
-        cce_loss = tf.keras.losses.CategoricalCrossentropy()
+        # cce_loss = tf.keras.losses.CategoricalCrossentropy()
 
         warm_model.optimizer_cvaegan()
 
         optimizer_main = torch.optim.Adam(params=[kv[1] for kv in warm_model.named_parameters() if
-                                                  kv[1].requires_grad and 'discriminator' not in kv[0]], \
+                                                  kv[1].requires_grad and 'discriminator' not in kv[0]],\
                                           lr=lr, weight_decay=weight_decay)  # except D
 
         optimizer_d = torch.optim.Adam(params=[p for p in warm_model.discriminator.parameters()] + [p for p in
-                                                                                                    warm_model.condition_discriminator.parameters()], \
+                                       warm_model.condition_discriminator.parameters()],\
                                        lr=lr, weight_decay=weight_decay)
 
         batch_num = len(dataloader)
@@ -651,9 +651,8 @@ def cvaegan_c(model,
                     pred_class = warm_model.condition_discriminator(warm_id_emb).to(device)
                     class_label = features[c_feature][:, [0]]
                     #                     class_label = torch.zeros(len(pred_class), c_class_size).to(device).scatter_(1, freq, 1).to(device)
-                    #                     print (class_label)
-                    #                     print(pred_class)
-                    loss_C = CE_loss(pred_class, class_label.squeeze())
+
+                    condition_loss = CE_loss(pred_class, class_label.squeeze())
 
                     # get matching loss LGC
                     real_input = warm_model.origin_item_emb(features[warm_model.item_id_name]).squeeze()
@@ -692,7 +691,7 @@ def cvaegan_c(model,
                     L2_loss = loss_L2_D + loss_L2_C + 0.5 * (torch.mean(torch.square(warm_id_emb - real_input)))
 
                     loss = main_loss + recon_term + 1e-4 * reg_term + 0.1 * L2_loss \
-                           + 0.1 * loss_matching_GC + 0.1 * loss_matching_GD
+                           + 0.1 * loss_matching_GC + 0.1 * loss_matching_GD + condition_loss
 
                     warm_model.zero_grad()
                     loss.backward(retain_graph=True)
@@ -716,7 +715,7 @@ def cvaegan_c(model,
 
                         # print(real_pred.requires_grad)
                         adv_loss = (adv_criterion(fake_pred, fake_label) + adv_criterion(real_pred, real_label)) / 2
-                        # adv_loss += condition_loss
+                        adv_loss += condition_loss
 
                         optimizer_d.zero_grad()
                         adv_loss.backward(retain_graph=True)

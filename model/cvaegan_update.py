@@ -25,7 +25,7 @@ class CVAEGAN(nn.Module):
               item_features: list,
               train_loader,
               device,
-              item_id_name = 'item_id',
+              item_id_name = 'user_id',
               emb_dim = 16, c_class_size=19):
         self.model = model
         self.device = device
@@ -128,6 +128,9 @@ class CVAEGAN(nn.Module):
             freq = x_dict['count']
         elif self.c_feature == 'genres':
             freq = x_dict[self.c_feature][:,[0]]
+        elif self.c_feature == 'clk_seq':
+            # freq = x_dict[self.c_feature]
+            freq = x_dict[self.c_feature].sum(dim=1, keepdim=True)
         else:
             freq = x_dict[self.c_feature]
             
@@ -136,7 +139,7 @@ class CVAEGAN(nn.Module):
         recon_term = torch.square(pred - item_id_emb).sum(-1).mean()
         return pred_p, reg_term, recon_term
 
-    def forward(self, x_dict, c_feature='x_fre'):
+    def forward(self, x_dict):
         warm_id_emb, reg_term, recon_term = self.warm_item_id(x_dict)
         target = self.model.forward_with_item_id_emb(warm_id_emb, x_dict)
         return target, recon_term, reg_term, warm_id_emb
