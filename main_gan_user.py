@@ -647,12 +647,12 @@ def cvaegan_c(model,
                     # main loss = −Ez∼Pz [log D(G(z))].
                     # The discriminator LD = −Ex∼Pr [logD(x)] − Ez∼Pz [log(1 − D(G(z))],(1)
                     pred_adv = warm_model.discriminator(warm_id_emb)
-                    loss_D = adv_criterion(pred_adv, real_label)  # make D think it is real
+                    loss_G = adv_criterion(pred_adv, real_label)  # make D think it is real
                     main_loss = criterion(target, label.float())
-                    main_loss += loss_D
+                    main_loss += loss_G
 
 
-                    # get generator matching loss LGC = 1/2 Ec ||Ex∼Pr fC (x) − Ez∼Pz fC (G(z, c))||2
+                    # get discriminator matching loss LGD = 1/2 ||Ex∼Pr fC (x) − Ez∼Pz fC (G(z))||2
                     matching_layer = len(warm_model.discriminator) - 1
                     real_input = warm_model.origin_item_emb(features[warm_model.item_id_name]).squeeze()
                     for j in range(matching_layer):
@@ -660,12 +660,12 @@ def cvaegan_c(model,
                     warm_id_emb_input = warm_id_emb
                     for j in range(matching_layer):
                         warm_id_emb_input = warm_model.discriminator[j](warm_id_emb_input)
-                    loss_matching_GC = 0.5 * torch.square(torch.mean(warm_id_emb_input) - torch.mean(real_input))
+                    loss_matching_GD = 0.5 * torch.square(torch.mean(warm_id_emb_input) - torch.mean(real_input))
 
-                    # L2_C are the features of an intermediate layer of generator network C ||fC(x) − fC(x 0 )||2
-                    loss_L2_C = 0.5 * torch.mean(torch.square(warm_id_emb_input - real_input))
+                    # L2_D are the features of an intermediate layer of generator network C ||fC(x) − fC(x 0 )||2
+                    loss_L2_D = 0.5 * torch.mean(torch.square(warm_id_emb_input - real_input))
 
-                    # get discriminator matching loss LGD = 1/2 ||Ex∼Pr fD(x) − Ez∼Pz fD(G(z))||2
+                    # get condition discriminator matching loss LGC = 1/2 Ec ||Ex∼Pr fD(x) − Ez∼Pz fD(G(z, c))||2
                     matching_layer = len(warm_model.condition_discriminator) - 1
                     real_input = warm_model.origin_item_emb(features[warm_model.item_id_name]).squeeze()
                     for j in range(matching_layer):
@@ -673,21 +673,21 @@ def cvaegan_c(model,
                     warm_id_emb_input = warm_id_emb
                     for j in range(matching_layer):
                         warm_id_emb_input = warm_model.condition_discriminator[j](warm_id_emb_input)
-                    loss_matching_GD = 0.5 * torch.square(torch.mean(warm_id_emb_input) - torch.mean(real_input))
+                    loss_matching_GC = 0.5 * torch.mean(torch.square(torch.mean(warm_id_emb_input) - torch.mean(real_input)))
                     #                     loss_matching_GC = 0
                     #                     for j in range(18):
                     #                         iclass_idx = torch.equal(class_label, j*torch.ones_like(class_label))
                     #                         loss_matching_GC += torch.square(torch.mean(warm_id_emb_input[iclass_idx]) - torch.mean(real_input[iclass_idx]))
 
-                    # L2_D are the features of an intermediate layer of d classification network D ||fD (x) − fD (x 0 )||2
-                    loss_L2_D = 0.5 * torch.mean(torch.square(warm_id_emb_input - real_input))
+                    # L2_C are the features of an intermediate layer of d classification network D ||fD (x) − fD (x 0 )||2
+                    # loss_L2_C = 0.5 * torch.mean(torch.square(warm_id_emb_input - real_input))
 
                     # get l2 reconstruction loss  1/2 (||x − x 0 ||2 + ||fD(x) − fD(x 0 )||2 + ||fC (x) − fC (x 0 )||2) (6)
                     # we add LM pair-wise feature matching loss between x and x' = 1/2 (||x − x 0 ||2
                     target, recon_term, reg_term, warm_id_emb = warm_model(features)
                     real_input = warm_model.origin_item_emb(features[warm_model.item_id_name]).squeeze()
                     LM = 0.5 * (torch.mean(torch.square(warm_id_emb - real_input)))
-                    L2_loss = loss_L2_D + loss_L2_C + LM
+
 
                     # get Conditional loss LC = −Ex∼Pr [log P(c|x)].The output of each entry represents the posterior probability P(c|x).（3）
                     pred_class = warm_model.condition_discriminator(warm_id_emb).to(device)
@@ -697,9 +697,12 @@ def cvaegan_c(model,
                     condition_loss = CE_loss(pred_class, class_label)
 
                     # total loss
+                    L2_loss =  loss_L2_D + LM
+                    #L2_loss += loss_L2_C //效果变差了？
                     loss = main_loss + recon_term + 1e-4 * reg_term + 0.1 * L2_loss \
-                           + 0.1 * loss_matching_GC + 0.1 * loss_matching_GD
-                    # loss = loss + 0.1 * condition_loss
+                           + 0.1 * loss_matching_GD
+                    loss = loss + 0.1 * loss_matching_GC
+                    loss = loss + 0.1 * condition_loss
 
                     warm_model.zero_grad()
                     loss.backward(retain_graph=True)
@@ -732,7 +735,7 @@ def cvaegan_c(model,
                         optimizer_d.step()
 
                     a, b, c, d, e, f = a + loss.item(), b + main_loss.item(), c + recon_term.item(), d + reg_term.item() \
-                        , e + adv_loss.item(), f + loss_D.item()
+                        , e + adv_loss.item(), f + loss_G.item()
                 a, b, c, d, e, f = a / iters, b / iters, c / iters, d / iters, e / iters, f / iters
                 if logger and (i + 1) % 10 == 0:
                     print("    Iter {}/{}, loss: {:.4f}, main loss: {:.4f}, recon loss: {:.4f}, reg loss: {:.4f}, adv_loss_G: {:.4f}\

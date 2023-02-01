@@ -82,6 +82,7 @@ class DeepFactorizationMachineModel(torch.nn.Module):
         linear_part = torch.concat(linears, dim=1).sum(dim=1, keepdims=True)
         res = (linear_part + self.fm(emb) + self.mlp(emb.view(-1, self.embed_output_dim))).squeeze(dim=1)
         return torch.sigmoid(res)
+
     
     def forward_with_item_id_emb_without_sigmoid(self, item_id_emb, x_dict):
         if item_id_emb.dim() == 2:
@@ -105,4 +106,15 @@ class DeepFactorizationMachineModel(torch.nn.Module):
         linear_part = torch.concat(linears, dim=1).sum(dim=1, keepdims=True)
         res = (linear_part + self.fm(emb) + self.mlp(emb.view(-1, self.embed_output_dim))).squeeze(dim=1)
         return res
+
+#     取出点击序列，以标题序列为例，x 表示 2048个样本，每个15个单词，warmup_emb_laryer[warmup title] 表示 title 一共有4376个词，每个16维，
+#     warmup_emb_laryer[warmup title] x 表示2048个样本，每个15个单词，每个词16维，
+#     warmup_emb_laryer[warmup title] x .sum 表示2048个样本，15个单词，对应维度加和，剩下2048个样本 一个向量 16维
+    def get_seq_emb_sum(self, id_name, x_dict):
+        if id_name in ('genres', 'clk_seq'):
+            x = x_dict[id_name]
+            id_emb = self.emb_layer[id_name](x).sum(dim=1, keepdims=True).squeeze(dim=1)
+            return id_emb
+        else:
+            return  'e'
 
